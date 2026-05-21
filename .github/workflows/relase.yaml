@@ -1,0 +1,93 @@
+# GitHub Actions workflow for mjfrisby/telemffb_defaults_xml
+#
+# Place this file at:  .github/workflows/release.yaml
+#
+# Assumes defaults.xml is committed to the repository root.
+#
+# How to release a new version:
+#   1. Upload the new defaults.xml via the GitHub web UI and commit it to main
+#   2. Go to Releases -> Draft a new release
+#   3. Set the tag to v1.0.1 (must start with v)
+#   4. Click "Publish release"
+#      GitHub pushes the tag, which fires this workflow automatically.
+#
+# Manifest URL:  https://mjfrisby.github.io/telemffb_defaults_xml/components.json
+#
+# One-time setup: Settings -> Pages -> Source = "GitHub Actions"
+
+name: Publish Component Manifest
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  publish-manifest:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write    # needed to attach the file to the GitHub Release
+      pages: write       # needed to deploy to GitHub Pages
+      id-token: write    # required by the deploy-pages action (OIDC auth)
+
+    steps:
+      # ── 1. Check out at the tagged commit ──────────────────────────────────
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # ── 2. Compute CRC32 checksum ──────────────────────────────────────────
+      - name: Compute CRC32 checksum
+        id: checksum
+        shell: python
+        run: |
+          import zlib, os
+          data = open('defaults.xml', 'rb').read()
+          checksum = f'{zlib.crc32(data):08x}'
+          print(f'CRC32: {checksum}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'value={checksum}\n')
+
+      # ── 3. Create/update GitHub Release and attach defaults.xml ───────────
+      - name: Attach defaults.xml to GitHub Release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: defaults.xml
+
+      # ── 4. Build components.json ────────────────────────────────────────────
+      - name: Build components.json
+        shell: python
+        env:
+          ASSETS_JSON:  ${{ steps.release.outputs.assets }}
+          CHECKSUM:     ${{ steps.checksum.outputs.value }}
+        run: |
+          import json, os, datetime
+          assets = json.loads(os.environ['ASSETS_JSON'])
+          download_url = next(
+              a['browser_download_url'] for a in assets if a['name'] == 'defaults.xml'
+          )
+          released_at = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+          manifest = {
+              "component":     "defaults_xml",
+              "filename":      "defaults.xml",
+              "download_url":  download_url,
+              "checksum":      os.environ['CHECKSUM'],
+              "checksum_type": "crc32",
+              "released_at":   released_at
+          }
+          os.makedirs("_site", exist_ok=True)
+          with open("_site/components.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+          print(json.dumps(manifest, indent=2))
+
+      # ── 5. Publish components.json to GitHub Pages ─────────────────────────
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
