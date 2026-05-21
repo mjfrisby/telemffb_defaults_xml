@@ -20,7 +20,7 @@ name: Publish Component Manifest
 on:
   push:
     tags:
-      - 'v*'
+      - '[0-9]*'     # fires on YYMMDD-style tags e.g. 260521
   workflow_dispatch:
 
 jobs:
